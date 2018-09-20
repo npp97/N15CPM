@@ -1,0 +1,483 @@
+library(doBy)
+library(bayesboot)
+library(FME)
+
+
+Z13am<-function(y0,pars,times){
+  out <- ode(y=y0,parms=pars,times=times,method='ode45',func='derivs',initfunc='initmod',dllname='zhang2013am',nout=4);
+  return(out);
+}
+Z13a<-function(y0,pars,times){
+  out <- ode(y=y0,parms=pars,times=times,method='ode45',func='derivs',initfunc='initmod',dllname='zhang2013a',nout=4);
+  return(out);
+}
+sumfun <- function(x, ...) {
+  c(tm=mean(x,0.025, ...), m = mean(x, ...), md = median(x, ...), v = sd(x, ...))
+}
+
+qul<-function(x,...){
+  quantile(x,c(0.025,0.25,0.5,0.75,0.975),na.rm=T)
+}
+print(Sys.time())
+
+
+#setwd(path0)
+
+flst<-dir(pattern='.RData',path=paste(path0a,'//',path1,sep=''),full.names = T,recursive = T)
+nflst<-length(flst)
+load(flst[1])
+
+par_no3<-par_nh4<-par_nh4no3<-par_tot<-as.data.frame(matrix(NA,nrow=1,ncol=length(MCMC.NH4$bestpar)))
+names(par_no3)<-names(par_nh4)<-names(par_nh4no3)<-names(par_tot)<-names(MCMC.NH4$bestpar)
+
+flst0<-''
+
+for (i in 1:nflst){
+  try({
+    load(file = flst[i])
+    flst0<-rbind(flst0,basename(flst[i]))
+    par_tot<-rbind(par_tot,MCMC$bestpar)
+    par_nh4<-rbind(par_nh4,MCMC.NH4$bestpar)
+    par_no3<-rbind(par_no3,MCMC.NO3$bestpar)
+    par_nh4no3<-rbind(par_nh4no3,MCMC.NH4NO3$bestpar)
+  })
+}
+flst0<-flst0[2:length(flst0)]
+trt<-flst0
+#trt[]<-''
+trt<-substr(basename(flst),trt_ssp,trt_esp);
+#for (i in 1:length(flst0)){
+#  aa<-gsub(pattern='--',x=flst0[i],replacement = '-n-')
+#  stp<-unlist(lapply(strsplit(aa, ''), function(x) which(x == '-')))[cd_lth];
+#  trt[i]<-substr(aa,1,(stp-1))}
+
+par_tot<-par_tot[2:nrow(par_tot),]
+par_nh4<-par_nh4[2:nrow(par_nh4),]
+par_no3<-par_no3[2:nrow(par_no3),]
+par_nh4no3<-par_nh4no3[2:nrow(par_nh4no3),]
+
+par_tot<-data.frame(ID=flst0,treatment=trt,par_tot)
+par_nh4<-data.frame(ID=flst0,treatment=trt,par_nh4)
+par_no3<-data.frame(ID=flst0,treatment=trt,par_no3)
+par_nh4no3<-data.frame(ID=flst0,treatment=trt,par_nh4no3)
+
+#####################################################################################
+nlvl<-nlevels(as.factor(par_tot$treatment))
+lvl<-as.character(levels(as.factor(par_tot$treatment)))
+# 
+par_tots<-as.data.frame(matrix(NA,ncol=ncol(par_tot),nrow=nlvl*10000))
+names(par_tots)<-names(par_tot)
+par_tots<-par_tots[,2:ncol(par_tots)]
+par_tots$treatment<-rep(lvl,each=10000)
+par_nh4s<-par_no3s<-par_nh4no3s<-par_tots
+# # 
+library(doParallel)
+# # 
+no_cores <- detectCores() - 0
+ncl<-max(min(no_cores,32),2)
+# 
+cl<-makeCluster(ncl)
+registerDoParallel(cl)
+# 
+for (i in 1:nlvl){
+#   
+ par_tots[((i-1)*10000+1):(i*10000),1]<-lvl[i]
+ par_nh4s[((i-1)*10000+1):(i*10000),1]<-lvl[i]
+ par_no3s[((i-1)*10000+1):(i*10000),1]<-lvl[i]
+ par_nh4no3s[((i-1)*10000+1):(i*10000),1]<-lvl[i]
+ ii_nh4<-which(par_nh4$treatment %in% lvl[i])
+ ii_no3<-which(par_no3$treatment %in% lvl[i])
+ ii_nh4no3<-which(par_nh4no3$treatment %in% lvl[i])
+ ii_tot<-which(par_tot$treatment %in% lvl[i])
+#   
+ for (j in 3:ncol(par_tot)){
+   bb<-bayesboot(par_tot[ii_tot,j],weighted.mean,R=10000,R2=10000,.parallel = T)$V1
+   par_tots[((i-1)*10000+1):(i*10000),j-1]<-bb
+#     
+   bb<-bayesboot(par_nh4[ii_nh4,j],weighted.mean,R=10000,R2=10000,.parallel = T)$V1
+   par_nh4s[((i-1)*10000+1):(i*10000),j-1]<-bb
+#     
+   bb<-bayesboot(par_no3[ii_no3,j],weighted.mean,R=10000,R2=10000,.parallel = T)$V1
+   par_no3s[((i-1)*10000+1):(i*10000),j-1]<-bb
+#     
+   bb<-bayesboot(par_nh4no3[ii_nh4no3,j],weighted.mean,R=10000,R2=10000,.parallel = T)$V1
+   par_nh4no3s[((i-1)*10000+1):(i*10000),j-1]<-bb
+ }
+}
+# 
+stopCluster(cl)
+
+sink(paste('out_calib1_',path1,".txt",sep=''))
+print(Sys.time())
+
+print("Summary of calibration output of soil nitrogen transformation concept model")
+print("----------------------------------------------------------------------------")
+
+print("-=== Parameters of NH4-15 =====================")
+print(summaryBy(.~treatment,FUN=sumfun,data=par_nh4[,-1],na.rm=T))
+print("#BayesianBoot")
+print(summaryBy(.~treatment,FUN=sumfun,data=par_nh4s,na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=par_nh4s,na.rm=T))
+
+print("-=== Parameters of NO3-15 =====================")
+print(summaryBy(.~treatment,FUN=sumfun,data=par_no3[,-1],na.rm=T))
+print("#BayesianBoot")
+print(summaryBy(.~treatment,FUN=sumfun,data=par_no3s,na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=par_no3s,na.rm=T))
+
+print("==== Parameters of NH4NO3-15 ====================")
+print(summaryBy(.~treatment,FUN=sumfun,data=par_nh4no3[,-1],na.rm=T))
+print("#BayesianBoot")
+print(summaryBy(.~treatment,FUN=sumfun,data=par_nh4no3s,na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=par_nh4no3s,na.rm=T))
+
+print("==== Parameters of TOTAL =====================")
+print(summaryBy(.~treatment,FUN=sumfun,data=par_tot[,-1],na.rm=T))
+print("#BayesianBoot")
+print(summaryBy(.~treatment,FUN=sumfun,data=par_tots,na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=par_tots,na.rm=T))
+
+print("==============================================")
+print("Cor-")
+
+
+load(flst[1])
+ss.nh4<-as.data.frame(ss.nh4)
+ss.no3<-as.data.frame(ss.no3)
+ss.nh4no3<-as.data.frame(ss.nh4no3)
+
+corcott<-c(cor(obs_nh4$NH4,ss.nh4$NH4),#cor.test(obs_nh4$NH4,ss.nh4$NH4)$p.value,
+           cor(obs_nh4$NO3,ss.nh4$NO3),#cor.test(obs_nh4$NO3,ss.nh4$NO3)$p.value,
+           cor(obs_nh4$NH4_15,ss.nh4$NH4_15),#cor.test(obs_nh4$NH4_15,ss.nh4$NH4_15)$p.value,
+           cor(obs_nh4$NO3_15,ss.nh4$NO3_15),#cor.test(obs_nh4$NO3_15,ss.nh4$NO3_15)$p.value,
+           cor(obs_no3$NH4,ss.no3$NH4),#cor.test(obs_no3$NH4,ss.no3$NH4)$p.value,
+           cor(obs_no3$NO3,ss.no3$NO3),#cor.test(obs_no3$NO3,ss.no3$NO3)$p.value,
+           cor(obs_no3$NH4_15,ss.no3$NH4_15),#cor.test(obs_no3$NH4_15,ss.no3$NH4_15)$p.value,
+           cor(obs_no3$NO3_15,ss.no3$NO3_15),#cor.test(obs_no3$NO3_15,ss.no3$NO3_15)$p.value,
+           cor(obs_nh4no3$NH4,ss.nh4no3$NH4),#cor.test(obs_nh4no3$NH4,ss.nh4no3$NH4)$p.value,
+           cor(obs_nh4no3$NO3,ss.nh4no3$NO3),#cor.test(obs_nh4no3$NO3,ss.nh4no3$NO3)$p.value,
+           cor(obs_nh4no3$NH4_15,ss.nh4no3$NH4_15),#cor.test(obs_nh4no3$NH4_15,ss.nh4no3$NH4_15)$p.value,
+           cor(obs_nh4no3$NO3_15,ss.nh4no3$NO3_15))#,#cor.test(obs_nh4no3$NO3_15,ss.nh4no3$NO3_15)$p.value)
+corr<-data.frame(ID=flst[1],treatment=trt[1],corcott)
+print(paste(flst[1],sfsmisc::vcat(format(corcott,digits=6),sep=','),sep=','))
+
+for (i in 2:nflst){
+
+  load(flst[i])
+  ss.nh4<-as.data.frame(ss.nh4)
+  ss.no3<-as.data.frame(ss.no3)
+  ss.nh4no3<-as.data.frame(ss.nh4no3)
+  
+  corcott<-c(cor(obs_nh4$NH4,ss.nh4$NH4),#cor.test(obs_nh4$NH4,ss.nh4$NH4)$p.value,
+             cor(obs_nh4$NO3,ss.nh4$NO3),#cor.test(obs_nh4$NO3,ss.nh4$NO3)$p.value,
+             cor(obs_nh4$NH4_15,ss.nh4$NH4_15),#cor.test(obs_nh4$NH4_15,ss.nh4$NH4_15)$p.value,
+             cor(obs_nh4$NO3_15,ss.nh4$NO3_15),#cor.test(obs_nh4$NO3_15,ss.nh4$NO3_15)$p.value,
+             cor(obs_no3$NH4,ss.no3$NH4),#cor.test(obs_no3$NH4,ss.no3$NH4)$p.value,
+             cor(obs_no3$NO3,ss.no3$NO3),#cor.test(obs_no3$NO3,ss.no3$NO3)$p.value,
+             cor(obs_no3$NH4_15,ss.no3$NH4_15),#cor.test(obs_no3$NH4_15,ss.no3$NH4_15)$p.value,
+             cor(obs_no3$NO3_15,ss.no3$NO3_15),#cor.test(obs_no3$NO3_15,ss.no3$NO3_15)$p.value,
+             cor(obs_nh4no3$NH4,ss.nh4no3$NH4),#cor.test(obs_nh4no3$NH4,ss.nh4no3$NH4)$p.value,
+             cor(obs_nh4no3$NO3,ss.nh4no3$NO3),#cor.test(obs_nh4no3$NO3,ss.nh4no3$NO3)$p.value,
+             cor(obs_nh4no3$NH4_15,ss.nh4no3$NH4_15),#cor.test(obs_nh4no3$NH4_15,ss.nh4no3$NH4_15)$p.value,
+             cor(obs_nh4no3$NO3_15,ss.nh4no3$NO3_15))#,#cor.test(obs_nh4no3$NO3_15,ss.nh4no3$NO3_15)$p.value)
+  corr1<-data.frame(ID=flst[i],treatment=trt[i],corcott)
+  corr<-rbind(corr,corr1)
+  print(paste(flst[i],trt[i],sfsmisc::vcat(format(corcott,digits=6),sep=','),sep=','))
+
+}
+
+print("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++")
+print("RATE---------------------")
+
+if (model_Type %in% 'zhang2013a'){
+  dyn.load(paste(path_dl,dll_name,sep='//'))
+  rates.tot<-rates.nh4<-rates.no3<-rates.nh4no3<-as.data.frame(matrix(NA,ncol=10,nrow=nflst))
+  names(rates.tot)<-names(rates.nh4no3)<-names(rates.no3)<-names(rates.nh4)<-c("NRec_2_NH4","NH4_2_NRec","NH4_2_NLab","NLab_2_NH4","NO3_2_NRec","NRec_2_NO3","NH4ads_2_NH4","NH4_2_NH4ads","NO3_2_NH4","NH4_2_NO3")
+  print("=====================================================================================================================================")
+  print(paste("ID","Treatment",sfsmisc::vcat(names(rates.nh4),sep=' '),sep='  '))
+  
+  for (i in 1:nflst){
+    # rm(list=ls());gc();
+    load(flst[i])
+    ss.nh4<-as.data.frame(Z13a(y0=y0.nh4,pars=MCMC.NH4$bestpar,times=seq(from=1,to=max(obs_nh4[, 'time'],by=1))))
+    ss.no3<-as.data.frame(Z13a(y0=y0.no3,pars=MCMC.NO3$bestpar,times=seq(from=1,to=max(obs_no3[, 'time'],by=1))))
+    ss.nh4no3<-as.data.frame(Z13a(y0=y0.nh4no3,pars=MCMC.NH4NO3$bestpar,times=seq(from=1,to=max(obs_nh4no3[, 'time'],by=1))))
+    
+  
+
+rates.nh4no3[i,]<-c(NRec_2_NH4 = as.numeric(MCMC.NH4NO3$bestpar['C_NRec_2_NH4']),
+                    NH4_2_NRec = mean(MCMC.NH4NO3$bestpar['C_NH4_2_NRec']),
+                    NH4_2_NLab =  mean(MCMC.NH4NO3$bestpar['C_NH4_2_NLab']),
+                    NLab_2_NH4 = mean(MCMC.NH4NO3$bestpar['K_NLab_2_NH4']*ss.nh4no3$NLab),
+                    NO3_2_NRec = mean(MCMC.NH4NO3$bestpar['C_NO3_2_NRec']),
+                    NRec_2_NO3 = as.numeric(MCMC.NH4NO3$bestpar['C_NRec_2_NO3']),
+                    NH4ads_2_NH4 = mean(MCMC.NH4NO3$bestpar['K_NH4ads_2_NH4']*ss.nh4no3$NH4ads),
+                    NH4_2_NH4ads = mean(MCMC.NH4NO3$bestpar['K_NH4_2_NH4ads']*ss.nh4no3$NH4),
+                    NO3_2_NH4 = mean(MCMC.NH4NO3$bestpar['K_NO3_2_NH4']*ss.nh4no3$NO3),
+                    NH4_2_NO3 = mean(MCMC.NH4NO3$bestpar['K_NH4_2_NO3']*ss.nh4no3$NH4))
+
+rates.nh4[i,]<-c(NRec_2_NH4 = as.numeric(MCMC.NH4$bestpar['C_NRec_2_NH4']),
+                    NH4_2_NRec = mean(MCMC.NH4$bestpar['C_NH4_2_NRec']),
+                    NH4_2_NLab =  mean(MCMC.NH4$bestpar['C_NH4_2_NLab']),
+                    NLab_2_NH4 = mean(MCMC.NH4$bestpar['K_NLab_2_NH4']*ss.nh4$NLab),
+                    NO3_2_NRec = mean(MCMC.NH4$bestpar['C_NO3_2_NRec']),
+                    NRec_2_NO3 = as.numeric(MCMC.NH4$bestpar['C_NRec_2_NO3']),
+                    NH4ads_2_NH4 = mean(MCMC.NH4$bestpar['K_NH4ads_2_NH4']*ss.nh4$NH4ads),
+                    NH4_2_NH4ads = mean(MCMC.NH4$bestpar['K_NH4_2_NH4ads']*ss.nh4$NH4),
+                    NO3_2_NH4 = mean(MCMC.NH4$bestpar['K_NO3_2_NH4']*ss.nh4$NO3),
+                    NH4_2_NO3 = mean(MCMC.NH4$bestpar['K_NH4_2_NO3']*ss.nh4$NH4))
+
+rates.no3[i,]<-c(NRec_2_NH4 = as.numeric(MCMC.NO3$bestpar['C_NRec_2_NH4']),
+                    NH4_2_NRec = mean(MCMC.NO3$bestpar['C_NH4_2_NRec']),
+                    NH4_2_NLab =  mean(MCMC.NO3$bestpar['C_NH4_2_NLab']),
+                    NLab_2_NH4 = mean(MCMC.NO3$bestpar['K_NLab_2_NH4']*ss.no3$NLab),
+                    NO3_2_NRec = mean(MCMC.NO3$bestpar['C_NO3_2_NRec']),
+                    NRec_2_NO3 = as.numeric(MCMC.NO3$bestpar['C_NRec_2_NO3']),
+                    NH4ads_2_NH4 = mean(MCMC.NO3$bestpar['K_NH4ads_2_NH4']*ss.no3$NH4ads),
+                    NH4_2_NH4ads = mean(MCMC.NO3$bestpar['K_NH4_2_NH4ads']*ss.no3$NH4),
+                    NO3_2_NH4 = mean(MCMC.NO3$bestpar['K_NO3_2_NH4']*ss.no3$NO3),
+                    NH4_2_NO3 = mean(MCMC.NO3$bestpar['K_NH4_2_NO3']*ss.no3$NH4))
+
+print(paste(flst[i],trt[i],'rate_nh4no3',sfsmisc::vcat(format(rates.nh4no3[i,],digits=3),sep=','),sep=','))
+print(paste(flst[i],trt[i],'rate_nh4',sfsmisc::vcat(format(rates.nh4[i,],digits=3),sep=','),sep=','))
+print(paste(flst[i],trt[i],'rate_no3',sfsmisc::vcat(format(rates.no3[i,],digits=3),sep=','),sep=','))
+
+}
+}
+
+if (model_Type %in% 'zhang2013am'){
+  dyn.load(paste(path_dl,dll_name,sep='//'))
+  rates.tot<-rates.nh4<-rates.no3<-rates.nh4no3<-as.data.frame(matrix(NA,ncol=12,nrow=nflst))
+  names(rates.tot)<-names(rates.nh4no3)<-names(rates.no3)<-names(rates.nh4)<-c("NRec_2_NH4","NH4_2_NRec","NH4_2_NLab","NLab_2_NH4","NO3_2_NRec","NRec_2_NO3","NO3sto_2_NO3",
+                                                                               "NO3_2_NO3sto","NH4ads_2_NH4","NH4_2_NH4ads","NO3_2_NH4","NH4_2_NO3")
+  rates.ss.nh4<-rates.ss.no3<-rates.ss.nh4no3<-rates.tot
+print("=====================================================================================================================================")
+  print(paste("ID","Treatment",sfsmisc::vcat(names(rates.nh4),sep=' '),sep='  '))
+  
+for (i in 1:nflst){
+  # rm(list=ls());gc();
+  load(flst[i])
+  ss.nh4<-as.data.frame(Z13am(y0=y0.nh4,pars=MCMC.NH4$bestpar,times=seq(from=1,to=max(obs_nh4[, 'time'],by=1))))
+  ss.no3<-as.data.frame(Z13am(y0=y0.no3,pars=MCMC.NO3$bestpar,times=seq(from=1,to=max(obs_no3[, 'time'],by=1))))
+  ss.nh4no3<-as.data.frame(Z13am(y0=y0.nh4no3,pars=MCMC.NH4NO3$bestpar,times=seq(from=1,to=max(obs_nh4no3[, 'time'],by=1))))
+  
+  rates.nh4no3[i,]<-c(NRec_2_NH4 = as.numeric(MCMC.NH4NO3$bestpar['C_NRec_2_NH4']),
+           NH4_2_NRec = mean(MCMC.NH4NO3$bestpar['Vmax_NH4_2_NRec']*ss.nh4no3$NH4/(MCMC.NH4NO3$bestpar['Km_NH4_2_NRec']+ss.nh4no3$NH4)),
+           NH4_2_NLab =  mean(MCMC.NH4NO3$bestpar['Vmax_NH4_2_NLab']*ss.nh4no3$NH4/(MCMC.NH4NO3$bestpar['Km_NH4_2_NLab']+ss.nh4no3$NH4)),
+           NLab_2_NH4 = mean(MCMC.NH4NO3$bestpar['Vmax_NLab_2_NH4']*ss.nh4no3$NLab/(MCMC.NH4NO3$bestpar['Km_NLab_2_NH4']+ss.nh4no3$NLab)),
+           NO3_2_NRec = mean(MCMC.NH4NO3$bestpar['Vmax_NO3_2_NRec']*ss.nh4no3$NO3/(MCMC.NH4NO3$bestpar['Km_NO3_2_NRec']+ss.nh4no3$NO3)),
+           NRec_2_NO3 = as.numeric(MCMC.NH4NO3$bestpar['C_NRec_2_NO3']),
+           NO3sto_2_NO3 = mean(MCMC.NH4NO3$bestpar['K_NO3sto_2_NO3']*ss.nh4no3$NO3sto),
+           NO3_2_NO3sto =mean(MCMC.NH4NO3$bestpar['K_NO3_2_NO3sto']*ss.nh4no3$NO3),
+           NH4ads_2_NH4 = mean(MCMC.NH4NO3$bestpar['K_NH4ads_2_NH4']*ss.nh4no3$NH4ads),
+           NH4_2_NH4ads = mean(MCMC.NH4NO3$bestpar['K_NH4_2_NH4ads']*ss.nh4no3$NH4),
+           NO3_2_NH4 = mean(MCMC.NH4NO3$bestpar['Vmax_NO3_2_NH4']*ss.nh4no3$NO3/(MCMC.NH4NO3$bestpar['Km_NO3_2_NH4']+ss.nh4no3$NO3)),
+           NH4_2_NO3 = mean(MCMC.NH4NO3$bestpar['Vmax_NH4_2_NO3']*ss.nh4no3$NH4/(MCMC.NH4NO3$bestpar['Km_NH4_2_NO3']+ss.nh4no3$NH4))
+      )
+  
+  rates.nh4[i,]<-c(NRec_2_NH4 = as.numeric(MCMC.NH4$bestpar['C_NRec_2_NH4']),
+           NH4_2_NRec = mean(MCMC.NH4$bestpar['Vmax_NH4_2_NRec']*ss.nh4$NH4/(MCMC.NH4$bestpar['Km_NH4_2_NRec']+ss.nh4$NH4)),
+           NH4_2_NLab =  mean(MCMC.NH4$bestpar['Vmax_NH4_2_NLab']*ss.nh4$NH4/(MCMC.NH4$bestpar['Km_NH4_2_NLab']+ss.nh4$NH4)),
+           NLab_2_NH4 = mean(MCMC.NH4$bestpar['Vmax_NLab_2_NH4']*ss.nh4$NLab/(MCMC.NH4$bestpar['Km_NLab_2_NH4']+ss.nh4$NLab)),
+           NO3_2_NRec = mean(MCMC.NH4$bestpar['Vmax_NO3_2_NRec']*ss.nh4$NO3/(MCMC.NH4$bestpar['Km_NO3_2_NRec']+ss.nh4$NO3)),
+           NRec_2_NO3 = as.numeric(MCMC.NH4$bestpar['C_NRec_2_NO3']),
+           NO3sto_2_NO3 = mean(MCMC.NH4$bestpar['K_NO3sto_2_NO3']*ss.nh4$NO3sto),
+           NO3_2_NO3sto =mean(MCMC.NH4$bestpar['K_NO3_2_NO3sto']*ss.nh4$NO3),
+           NH4ads_2_NH4 = mean(MCMC.NH4$bestpar['K_NH4ads_2_NH4']*ss.nh4$NH4ads),
+           NH4_2_NH4ads = mean(MCMC.NH4$bestpar['K_NH4_2_NH4ads']*ss.nh4$NH4),
+           NO3_2_NH4 = mean(MCMC.NH4$bestpar['Vmax_NO3_2_NH4']*ss.nh4$NO3/(MCMC.NH4$bestpar['Km_NO3_2_NH4']+ss.nh4$NO3)),
+           NH4_2_NO3 = mean(MCMC.NH4$bestpar['Vmax_NH4_2_NO3']*ss.nh4$NH4/(MCMC.NH4$bestpar['Km_NH4_2_NO3']+ss.nh4$NH4))
+  )
+  
+  rates.no3[i,]<-c(NRec_2_NH4 = as.numeric(MCMC.NO3$bestpar['C_NRec_2_NH4']),
+           NH4_2_NRec = mean(MCMC.NO3$bestpar['Vmax_NH4_2_NRec']*ss.no3$NH4/(MCMC.NO3$bestpar['Km_NH4_2_NRec']+ss.no3$NH4)),
+           NH4_2_NLab =  mean(MCMC.NO3$bestpar['Vmax_NH4_2_NLab']*ss.no3$NH4/(MCMC.NO3$bestpar['Km_NH4_2_NLab']+ss.no3$NH4)),
+           NLab_2_NH4 = mean(MCMC.NO3$bestpar['Vmax_NLab_2_NH4']*ss.no3$NLab/(MCMC.NO3$bestpar['Km_NLab_2_NH4']+ss.no3$NLab)),
+           NO3_2_NRec = mean(MCMC.NO3$bestpar['Vmax_NO3_2_NRec']*ss.no3$NO3/(MCMC.NO3$bestpar['Km_NO3_2_NRec']+ss.no3$NO3)),
+           NRec_2_NO3 = as.numeric(MCMC.NO3$bestpar['C_NRec_2_NO3']),
+           NO3sto_2_NO3 = mean(MCMC.NO3$bestpar['K_NO3sto_2_NO3']*ss.no3$NO3sto),
+           NO3_2_NO3sto =mean(MCMC.NO3$bestpar['K_NO3_2_NO3sto']*ss.no3$NO3),
+           NH4ads_2_NH4 = mean(MCMC.NO3$bestpar['K_NH4ads_2_NH4']*ss.no3$NH4ads),
+           NH4_2_NH4ads = mean(MCMC.NO3$bestpar['K_NH4_2_NH4ads']*ss.no3$NH4),
+           NO3_2_NH4 = mean(MCMC.NO3$bestpar['Vmax_NO3_2_NH4']*ss.no3$NO3/(MCMC.NO3$bestpar['Km_NO3_2_NH4']+ss.no3$NO3)),
+           NH4_2_NO3 = mean(MCMC.NO3$bestpar['Vmax_NH4_2_NO3']*ss.no3$NH4/(MCMC.NO3$bestpar['Km_NH4_2_NO3']+ss.no3$NH4))
+  )
+  
+  print(paste(flst[i],trt[i],'rate_nh4no3',sfsmisc::vcat(format(rates.nh4no3[i,],digits=3),sep=','),sep=','))
+  print(paste(flst[i],trt[i],'rate_nh4',sfsmisc::vcat(format(rates.nh4[i,],digits=3),sep=','),sep=','))
+  print(paste(flst[i],trt[i],'rate_no3',sfsmisc::vcat(format(rates.no3[i,],digits=3),sep=','),sep=','))
+
+  ss.nh4<-as.data.frame(Z13am(y0=y0.nh4,pars=MCMC$bestpar,times=seq(from=1,to=max(obs_nh4[, 'time'],by=1))))
+  ss.no3<-as.data.frame(Z13am(y0=y0.no3,pars=MCMC$bestpar,times=seq(from=1,to=max(obs_no3[, 'time'],by=1))))
+  ss.nh4no3<-as.data.frame(Z13am(y0=y0.nh4no3,pars=MCMC$bestpar,times=seq(from=1,to=max(obs_nh4no3[, 'time'],by=1))))
+  
+  rates.ss.nh4no3[i,]<-c(NRec_2_NH4 = as.numeric(MCMC$bestpar['C_NRec_2_NH4']),
+           NH4_2_NRec = mean(MCMC$bestpar['Vmax_NH4_2_NRec']*ss.nh4no3$NH4/(MCMC$bestpar['Km_NH4_2_NRec']+ss.nh4no3$NH4)),
+           NH4_2_NLab =  mean(MCMC$bestpar['Vmax_NH4_2_NLab']*ss.nh4no3$NH4/(MCMC$bestpar['Km_NH4_2_NLab']+ss.nh4no3$NH4)),
+           NLab_2_NH4 = mean(MCMC$bestpar['Vmax_NLab_2_NH4']*ss.nh4no3$NLab/(MCMC$bestpar['Km_NLab_2_NH4']+ss.nh4no3$NLab)),
+           NO3_2_NRec = mean(MCMC$bestpar['Vmax_NO3_2_NRec']*ss.nh4no3$NO3/(MCMC$bestpar['Km_NO3_2_NRec']+ss.nh4no3$NO3)),
+           NRec_2_NO3 = as.numeric(MCMC$bestpar['C_NRec_2_NO3']),
+           NO3sto_2_NO3 = mean(MCMC$bestpar['K_NO3sto_2_NO3']*ss.nh4no3$NO3sto),
+           NO3_2_NO3sto =mean(MCMC$bestpar['K_NO3_2_NO3sto']*ss.nh4no3$NO3),
+           NH4ads_2_NH4 = mean(MCMC$bestpar['K_NH4ads_2_NH4']*ss.nh4no3$NH4ads),
+           NH4_2_NH4ads = mean(MCMC$bestpar['K_NH4_2_NH4ads']*ss.nh4no3$NH4),
+           NO3_2_NH4 = mean(MCMC$bestpar['Vmax_NO3_2_NH4']*ss.nh4no3$NO3/(MCMC$bestpar['Km_NO3_2_NH4']+ss.nh4no3$NO3)),
+           NH4_2_NO3 = mean(MCMC$bestpar['Vmax_NH4_2_NO3']*ss.nh4no3$NH4/(MCMC$bestpar['Km_NH4_2_NO3']+ss.nh4no3$NH4))
+      )
+  
+  rates.ss.nh4[i,]<-c(NRec_2_NH4 = as.numeric(MCMC$bestpar['C_NRec_2_NH4']),
+           NH4_2_NRec = mean(MCMC$bestpar['Vmax_NH4_2_NRec']*ss.nh4$NH4/(MCMC$bestpar['Km_NH4_2_NRec']+ss.nh4$NH4)),
+           NH4_2_NLab =  mean(MCMC$bestpar['Vmax_NH4_2_NLab']*ss.nh4$NH4/(MCMC$bestpar['Km_NH4_2_NLab']+ss.nh4$NH4)),
+           NLab_2_NH4 = mean(MCMC$bestpar['Vmax_NLab_2_NH4']*ss.nh4$NLab/(MCMC$bestpar['Km_NLab_2_NH4']+ss.nh4$NLab)),
+           NO3_2_NRec = mean(MCMC$bestpar['Vmax_NO3_2_NRec']*ss.nh4$NO3/(MCMC$bestpar['Km_NO3_2_NRec']+ss.nh4$NO3)),
+           NRec_2_NO3 = as.numeric(MCMC$bestpar['C_NRec_2_NO3']),
+           NO3sto_2_NO3 = mean(MCMC$bestpar['K_NO3sto_2_NO3']*ss.nh4$NO3sto),
+           NO3_2_NO3sto =mean(MCMC$bestpar['K_NO3_2_NO3sto']*ss.nh4$NO3),
+           NH4ads_2_NH4 = mean(MCMC$bestpar['K_NH4ads_2_NH4']*ss.nh4$NH4ads),
+           NH4_2_NH4ads = mean(MCMC$bestpar['K_NH4_2_NH4ads']*ss.nh4$NH4),
+           NO3_2_NH4 = mean(MCMC$bestpar['Vmax_NO3_2_NH4']*ss.nh4$NO3/(MCMC$bestpar['Km_NO3_2_NH4']+ss.nh4$NO3)),
+           NH4_2_NO3 = mean(MCMC$bestpar['Vmax_NH4_2_NO3']*ss.nh4$NH4/(MCMC$bestpar['Km_NH4_2_NO3']+ss.nh4$NH4))
+  )
+  
+  rates.ss.no3[i,]<-c(NRec_2_NH4 = as.numeric(MCMC$bestpar['C_NRec_2_NH4']),
+           NH4_2_NRec = mean(MCMC$bestpar['Vmax_NH4_2_NRec']*ss.no3$NH4/(MCMC$bestpar['Km_NH4_2_NRec']+ss.no3$NH4)),
+           NH4_2_NLab =  mean(MCMC$bestpar['Vmax_NH4_2_NLab']*ss.no3$NH4/(MCMC$bestpar['Km_NH4_2_NLab']+ss.no3$NH4)),
+           NLab_2_NH4 = mean(MCMC$bestpar['Vmax_NLab_2_NH4']*ss.no3$NLab/(MCMC$bestpar['Km_NLab_2_NH4']+ss.no3$NLab)),
+           NO3_2_NRec = mean(MCMC$bestpar['Vmax_NO3_2_NRec']*ss.no3$NO3/(MCMC$bestpar['Km_NO3_2_NRec']+ss.no3$NO3)),
+           NRec_2_NO3 = as.numeric(MCMC$bestpar['C_NRec_2_NO3']),
+           NO3sto_2_NO3 = mean(MCMC$bestpar['K_NO3sto_2_NO3']*ss.no3$NO3sto),
+           NO3_2_NO3sto =mean(MCMC$bestpar['K_NO3_2_NO3sto']*ss.no3$NO3),
+           NH4ads_2_NH4 = mean(MCMC$bestpar['K_NH4ads_2_NH4']*ss.no3$NH4ads),
+           NH4_2_NH4ads = mean(MCMC$bestpar['K_NH4_2_NH4ads']*ss.no3$NH4),
+           NO3_2_NH4 = mean(MCMC$bestpar['Vmax_NO3_2_NH4']*ss.no3$NO3/(MCMC$bestpar['Km_NO3_2_NH4']+ss.no3$NO3)),
+           NH4_2_NO3 = mean(MCMC$bestpar['Vmax_NH4_2_NO3']*ss.no3$NH4/(MCMC$bestpar['Km_NH4_2_NO3']+ss.no3$NH4))
+  )
+  
+  print(paste(flst[i],trt[i],'rate.ss.nh4no3',sfsmisc::vcat(format(rates.ss.nh4no3[i,],digits=3),sep=','),sep=','))
+  print(paste(flst[i],trt[i],'rate.ss.nh4',sfsmisc::vcat(format(rates.ss.nh4[i,],digits=3),sep=','),sep=','))
+  print(paste(flst[i],trt[i],'rate.ss.no3',sfsmisc::vcat(format(rates.ss.no3[i,],digits=3),sep=','),sep=','))
+  
+}
+}
+
+rates.nh4no3s<-data.frame(ID=basename(flst),treatment=trt,rates.nh4no3)
+rates.nh4s<-data.frame(ID=basename(flst),treatment=trt,rates.nh4)
+rates.no3s<-data.frame(ID=basename(flst),treatment=trt,rates.no3)
+
+rates.ss.nh4no3s<-data.frame(ID=basename(flst),treatment=trt,rates.ss.nh4no3)
+rates.ss.nh4s<-data.frame(ID=basename(flst),treatment=trt,rates.ss.nh4)
+rates.ss.no3s<-data.frame(ID=basename(flst),treatment=trt,rates.ss.no3)
+
+###################################################################
+nlvl<-nlevels(as.factor(rates.nh4s$treatment))
+lvl<-as.character(levels(as.factor(rates.nh4s$treatment)))
+
+rates_nh4<-as.data.frame(matrix(NA,ncol=(ncol(rates.nh4s)-1),nrow=nlvl*10000))
+names(rates_nh4)<-names(rates.nh4s)[-1]
+rates_nh4$treatment<-rep(lvl,each=10000)
+
+rates_no3<-rates_nh4no3<-rates_nh4
+rates_ss_no3<-rates_ss_nh4no3<-rates_ss_nh4<-rates_nh4;
+# #
+ library(doParallel)
+# #
+ no_cores <- detectCores() - 0
+ ncl<-max(min(no_cores,8),2)
+# #
+ cl<-makeCluster(ncl)
+ registerDoParallel(cl)
+#
+ for (i in 1:nlvl){
+#
+   rates_nh4[((i-1)*10000+1):(i*10000),1]<-lvl[i]
+   rates_no3[((i-1)*10000+1):(i*10000),1]<-lvl[i]
+   rates_nh4no3[((i-1)*10000+1):(i*10000),1]<-lvl[i]
+   rates_ss_nh4[((i-1)*10000+1):(i*10000),1]<-lvl[i]
+   rates_ss_no3[((i-1)*10000+1):(i*10000),1]<-lvl[i]
+   rates_ss_nh4no3[((i-1)*10000+1):(i*10000),1]<-lvl[i]
+
+   ii_nh4<-which(rates.nh4s$treatment %in% lvl[i])
+   ii_no3<-which(rates.no3s$treatment %in% lvl[i])
+   ii_nh4no3<-which(rates.nh4no3s$treatment %in% lvl[i])
+   ii_ss_nh4<-which(rates.ss.nh4s$treatment %in% lvl[i])
+   ii_ss_no3<-which(rates.ss.no3s$treatment %in% lvl[i])
+   ii_ss_nh4no3<-which(rates.ss.nh4no3s$treatment %in% lvl[i])
+
+#
+   for (j in 3:ncol(rates.nh4s)){
+#
+     bb<-bayesboot(rates.nh4s[ii_nh4,j],weighted.mean,R=10000,R2=10000,.parallel = T)$V1
+     rates_nh4[((i-1)*10000+1):(i*10000),j-1]<-bb
+#
+     bb<-bayesboot(rates.no3s[ii_no3,j],weighted.mean,R=10000,R2=10000,.parallel = T)$V1
+     rates_no3[((i-1)*10000+1):(i*10000),j-1]<-bb
+#
+     bb<-bayesboot(rates.nh4no3s[ii_nh4no3,j],weighted.mean,R=10000,R2=10000,.parallel = T)$V1
+     rates_nh4no3[((i-1)*10000+1):(i*10000),j-1]<-bb
+#
+     bb<-bayesboot(rates.ss.nh4s[ii_ss_nh4,j],weighted.mean,R=10000,R2=10000,.parallel = T)$V1
+     rates_ss_nh4[((i-1)*10000+1):(i*10000),j-1]<-bb
+#
+     bb<-bayesboot(rates.ss.no3s[ii_ss_no3,j],weighted.mean,R=10000,R2=10000,.parallel = T)$V1
+     rates_ss_no3[((i-1)*10000+1):(i*10000),j-1]<-bb
+#
+     bb<-bayesboot(rates.ss.nh4no3s[ii_ss_nh4no3,j],weighted.mean,R=10000,R2=10000,.parallel = T)$V1
+     rates_ss_nh4no3[((i-1)*10000+1):(i*10000),j-1]<-bb
+
+   }
+ }
+#
+ stopCluster(cl)
+#
+
+print("Summary of calibration rates output of soil nitrogen transformation concept model")
+print("----------------------------------------------------------------------------")
+
+print("=========================SECTION A, seperate models")
+print("-=== Parameters of NH4-15 =====================")
+print(summaryBy(.~treatment,FUN=sumfun,data=rates.nh4s[,c(-1)],na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=rates.nh4s[,c(-1)],na.rm=T))
+print("#BayesianBoot")
+print(summaryBy(.~treatment,FUN=sumfun,data=rates_nh4,na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=rates_nh4,na.rm=T))
+
+print("-=== Parameters of NO3-15 =====================")
+print(summaryBy(.~treatment,FUN=sumfun,data=rates.no3s[,-1],na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=rates.no3s[,-1],na.rm=T))
+print("#BayesianBoot")
+print(summaryBy(.~treatment,FUN=sumfun,data=rates_no3,na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=rates_no3,na.rm=T))
+
+print("==== Parameters of NH4NO3-15 ====================")
+print(summaryBy(.~treatment,FUN=sumfun,data=rates.nh4no3s[,-1],na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=rates.nh4no3s[,-1],na.rm=T))
+print("#BayesianBoot")
+print(summaryBy(.~treatment,FUN=sumfun,data=rates_nh4no3,na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=rates_nh4no3,na.rm=T))
+
+
+print("=========================SECTION B, ONE model")
+print("-=== Parameters of NH4-15 =====================")
+print(summaryBy(.~treatment,FUN=sumfun,data=rates.ss.nh4s[,c(-1)],na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=rates.ss.nh4s[,c(-1)],na.rm=T))
+print("#BayesianBoot")
+print(summaryBy(.~treatment,FUN=sumfun,data=rates_ss_nh4,na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=rates_ss_nh4,na.rm=T))
+
+print("-=== Parameters of NO3-15 =====================")
+print(summaryBy(.~treatment,FUN=sumfun,data=rates.ss.no3s[,-1],na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=rates.ss.no3s[,-1],na.rm=T))
+print("#BayesianBoot")
+print(summaryBy(.~treatment,FUN=sumfun,data=rates_ss_no3,na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=rates_ss_no3,na.rm=T))
+
+print("==== Parameters of NH4NO3-15 ====================")
+print(summaryBy(.~treatment,FUN=sumfun,data=rates.ss.nh4no3s[,-1],na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=rates.ss.nh4no3s[,-1],na.rm=T))
+print("#BayesianBoot")
+print(summaryBy(.~treatment,FUN=sumfun,data=rates_ss_nh4no3,na.rm=T))
+print(summaryBy(.~treatment,FUN=qul,data=rates_ss_nh4no3,na.rm=T))
+
+save.image(file=paste('out_calib_',path1,".RData",sep=''))
+sink()
+print(Sys.time())
